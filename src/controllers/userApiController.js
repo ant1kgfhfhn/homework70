@@ -3,8 +3,6 @@ const bcrypt = require("bcryptjs");
 const { once } = require("events");
 const User = require("../models/User");
 
-const users = User.collection;
-
 function validId(id) {
   return mongoose.isValidObjectId(id);
 }
@@ -15,22 +13,25 @@ function validEmail(email) {
 
 function publicUser(user) {
   if (!user) return user;
-  const { password, ...safeUser } = user;
+
+  const result = user.toObject ? user.toObject() : user;
+  const { password, ...safeUser } = result;
+
   return safeUser;
 }
 
-// GET /api/users — find() and projection
+// GET /api/users
 async function findUsers(req, res, next) {
   try {
-    const projection =
-      req.query.fields === "email"
-        ? { _id: 1, email: 1, createdAt: 1 }
-        : { password: 0 };
+    let query = User.find();
 
-    const result = await users
-      .find({}, { projection })
-      .sort({ createdAt: -1 })
-      .toArray();
+    if (req.query.fields === "email") {
+      query = query.select("_id email createdAt");
+    } else {
+      query = query.select("-password");
+    }
+
+    const result = await query.sort({ createdAt: -1 }).lean();
 
     res.json(result);
   } catch (error) {
@@ -38,19 +39,13 @@ async function findUsers(req, res, next) {
   }
 }
 
-// GET /api/users/cursor — read documents using a MongoDB cursor
+// GET /api/users/cursor
 async function streamUsers(req, res, next) {
-  const cursor = users
-    .find(
-      {},
-      {
-        projection: {
-          password: 0,
-        },
-      },
-    )
+  const cursor = User.find()
+    .select("-password")
     .sort({ createdAt: -1 })
-    .batchSize(100);
+    .lean()
+    .cursor({ batchSize: 100 });
 
   try {
     res.status(200);
@@ -67,7 +62,7 @@ async function streamUsers(req, res, next) {
 
       first = false;
 
-      const canContinue = res.write(JSON.stringify(publicUser(user)));
+      const canContinue = res.write(JSON.stringify(user));
 
       if (!canContinue) {
         await once(res, "drain");
@@ -86,7 +81,7 @@ async function streamUsers(req, res, next) {
   }
 }
 
-// GET /api/users/stats — aggregation statistics
+// GET /api/users/stats
 async function getUserStats(req, res, next) {
   try {
     const pipeline = [
@@ -139,7 +134,7 @@ async function getUserStats(req, res, next) {
       },
     ];
 
-    const result = await users.aggregate(pipeline).toArray();
+    const result = await User.aggregate(pipeline);
 
     res.json(
       result[0] || {
@@ -153,7 +148,7 @@ async function getUserStats(req, res, next) {
   }
 }
 
-// POST /api/users — insertOne
+// POST /api/users
 async function insertOne(req, res, next) {
   try {
     const { email, password } = req.body;
@@ -168,30 +163,27 @@ async function insertOne(req, res, next) {
       });
     }
 
-    const now = new Date();
-
-    const document = {
+    const user = await User.create({
       email: email.trim().toLowerCase(),
       password: await bcrypt.hash(password, 10),
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const result = await users.insertOne(document);
+    });
 
     res.status(201).json({
       message: "User created",
-      user: publicUser({ _id: result.insertedId, ...document }),
+      user: publicUser(user),
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ error: "Email already exists." });
+      return res.status(409).json({
+        error: "Email already exists.",
+      });
     }
+
     next(error);
   }
 }
 
-// POST /api/users/bulk — insertMany
+// POST /api/users/bulk
 async function insertMany(req, res, next) {
   try {
     const { users: inputUsers } = req.body;
@@ -216,53 +208,58 @@ async function insertMany(req, res, next) {
       });
     }
 
-    const now = new Date();
-
     const documents = await Promise.all(
       inputUsers.map(async (user) => ({
         email: user.email.trim().toLowerCase(),
         password: await bcrypt.hash(user.password, 10),
-        createdAt: now,
-        updatedAt: now,
       })),
     );
 
-    const result = await users.insertMany(documents, { ordered: true });
+    const result = await User.insertMany(documents, {
+      ordered: true,
+    });
 
     res.status(201).json({
       message: "Users created",
-      insertedCount: result.insertedCount,
-      insertedIds: Object.values(result.insertedIds),
+      insertedCount: result.length,
+      insertedIds: result.map((user) => user._id),
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ error: "An email already exists." });
+      return res.status(409).json({
+        error: "An email already exists.",
+      });
     }
+
     next(error);
   }
 }
 
-// PATCH /api/users/:id — updateOne
+// PATCH /api/users/:id
 async function updateOne(req, res, next) {
   try {
     if (!validId(req.params.id)) {
-      return res.status(400).json({ error: "Invalid user ID." });
+      return res.status(400).json({
+        error: "Invalid user ID.",
+      });
     }
 
     const { email } = req.body;
 
     if (!validEmail(email)) {
-      return res.status(400).json({ error: "Provide a valid email." });
+      return res.status(400).json({
+        error: "Provide a valid email.",
+      });
     }
 
-    const result = await users.updateOne(
-      { _id: new mongoose.Types.ObjectId(req.params.id) },
+    const result = await User.updateOne(
+      { _id: req.params.id },
       {
         $set: {
           email: email.trim().toLowerCase(),
-          updatedAt: new Date(),
         },
       },
+      { runValidators: true },
     );
 
     res.json({
@@ -272,13 +269,16 @@ async function updateOne(req, res, next) {
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ error: "Email already exists." });
+      return res.status(409).json({
+        error: "Email already exists.",
+      });
     }
+
     next(error);
   }
 }
 
-// PATCH /api/users/bulk/update — updateMany
+// PATCH /api/users/bulk/update
 async function updateMany(req, res, next) {
   try {
     const { filter, email } = req.body;
@@ -289,14 +289,16 @@ async function updateMany(req, res, next) {
       });
     }
 
-    const result = await users.updateMany(
-      { email: filter.email.trim().toLowerCase() },
+    const result = await User.updateMany(
+      {
+        email: filter.email.trim().toLowerCase(),
+      },
       {
         $set: {
           email: email.trim().toLowerCase(),
-          updatedAt: new Date(),
         },
       },
+      { runValidators: true },
     );
 
     res.json({
@@ -306,17 +308,22 @@ async function updateMany(req, res, next) {
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ error: "Email already exists." });
+      return res.status(409).json({
+        error: "Email already exists.",
+      });
     }
+
     next(error);
   }
 }
 
-// PUT /api/users/:id/replace — replaceOne
+// PUT /api/users/:id/replace
 async function replaceOne(req, res, next) {
   try {
     if (!validId(req.params.id)) {
-      return res.status(400).json({ error: "Invalid user ID." });
+      return res.status(400).json({
+        error: "Invalid user ID.",
+      });
     }
 
     const { email, password } = req.body;
@@ -334,14 +341,11 @@ async function replaceOne(req, res, next) {
     const replacement = {
       email: email.trim().toLowerCase(),
       password: await bcrypt.hash(password, 10),
-      createdAt: new Date(),
-      updatedAt: new Date(),
     };
 
-    const result = await users.replaceOne(
-      { _id: new mongoose.Types.ObjectId(req.params.id) },
-      replacement,
-    );
+    const result = await User.replaceOne({ _id: req.params.id }, replacement, {
+      runValidators: true,
+    });
 
     res.json({
       message: result.matchedCount ? "Replacement completed" : "User not found",
@@ -350,21 +354,26 @@ async function replaceOne(req, res, next) {
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ error: "Email already exists." });
+      return res.status(409).json({
+        error: "Email already exists.",
+      });
     }
+
     next(error);
   }
 }
 
-// DELETE /api/users/:id — deleteOne
+// DELETE /api/users/:id
 async function deleteOne(req, res, next) {
   try {
     if (!validId(req.params.id)) {
-      return res.status(400).json({ error: "Invalid user ID." });
+      return res.status(400).json({
+        error: "Invalid user ID.",
+      });
     }
 
-    const result = await users.deleteOne({
-      _id: new mongoose.Types.ObjectId(req.params.id),
+    const result = await User.deleteOne({
+      _id: req.params.id,
     });
 
     res.json({
@@ -376,7 +385,7 @@ async function deleteOne(req, res, next) {
   }
 }
 
-// DELETE /api/users/bulk — deleteMany
+// DELETE /api/users/bulk
 async function deleteMany(req, res, next) {
   try {
     const { filter } = req.body;
@@ -392,7 +401,7 @@ async function deleteMany(req, res, next) {
       });
     }
 
-    const result = await users.deleteMany({
+    const result = await User.deleteMany({
       email: filter.email.trim().toLowerCase(),
     });
 
