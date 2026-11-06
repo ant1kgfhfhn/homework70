@@ -1,19 +1,21 @@
-# MongoDB CRUD and Data Processing
+# MongoDB CRUD, Data Processing and Docker
 
-This project is a simple Express.js application connected to MongoDB Atlas.
+This project is a simple Express.js application connected to MongoDB.
 
-It includes user authentication, CRUD operations, MongoDB cursors and an aggregation query.
+It includes user authentication, CRUD operations, MongoDB cursors, aggregation and Docker support.
 
 ## Technologies
 
 - Node.js
 - Express.js
-- MongoDB Atlas
+- MongoDB
 - Mongoose
 - Passport.js
 - bcryptjs
+- Docker
+- Docker Compose
 
-## Installation
+## Installation without Docker
 
 Install dependencies:
 
@@ -37,21 +39,105 @@ npm start
 
 The server runs at:
 
-```text
 http://localhost:3000
+
+## Docker Setup
+
+Make sure Docker Desktop is installed and running.
+
+The project includes:
+
+- `Dockerfile` – builds the Express application image.
+- `docker-compose.yml` – starts Express and MongoDB.
+- `.dockerignore` – excludes unnecessary files from the Docker image.
+
+### Start containers
+
+Run this command in the project root:
+
+```bash
+docker compose up --build
 ```
+
+Docker Compose starts two services:
+
+- `app` – Express application on port 3000.
+- `mongo` – MongoDB database on port 27017.
+
+The application connects to MongoDB using:
+
+```env
+MONGODB_URI=mongodb://mongo:27017/hw66
+```
+
+The `depends_on` option with a health check makes the application wait until MongoDB is ready.
+
+### Open the application
+
+Open the browser:
+
+http://localhost:3000
+
+The application displays the Passport Authentication page.
+
+### Volumes and automatic updates
+
+Docker Compose uses volumes to synchronize the local project files with the container.
+
+```yaml
+volumes:
+  - .:/app
+  - /app/node_modules
+```
+
+The application runs with:
+
+```bash
+node --watch src/server.js
+```
+
+To test automatic updates:
+
+1. Start Docker Compose.
+2. Open `views/auth/home.pug`.
+3. Change some text and save the file.
+4. Refresh the browser.
+5. The changes appear without manually restarting the container.
+
+### MongoDB data storage
+
+MongoDB uses a named volume:
+
+```yaml
+volumes:
+  - mongo_data:/data/db
+```
+
+This keeps database data between container restarts.
+
+### Stop containers
+
+Press `Ctrl + C` in the terminal, then run:
+
+```bash
+docker compose down
+```
+
+To stop containers and remove the database volume:
+
+```bash
+docker compose down -v
+```
+
+**Note:** The second command deletes the MongoDB data stored in the Docker volume.
 
 ## Authentication
 
 All `/api/users` routes require an authenticated user.
 
-First, log in through the application:
+First, log in through the application.
 
-```text
-POST /login
-```
-
-When using Thunder Client, keep the session cookie from the login request. The cookie is needed for the API requests.
+When using Thunder Client, keep the session cookie from the login request. The cookie is needed for API requests.
 
 ## API Routes
 
@@ -67,31 +153,13 @@ http://localhost:3000/api/users
 
 Returns users without their passwords.
 
-Example:
-
-```http
-GET /api/users
-```
-
 ### 2. Read users with projection
 
 **GET `/api/users?fields=email`**
 
 Returns only the user ID, email and creation date.
 
-Example response:
-
-```json
-[
-  {
-    "_id": "USER_ID",
-    "email": "user@example.com",
-    "createdAt": "2026-01-01T10:00:00.000Z"
-  }
-]
-```
-
-### 3. Create one user — insertOne
+### 3. Create one user – insertOne
 
 **POST `/api/users`**
 
@@ -108,7 +176,7 @@ Expected status: `201 Created`.
 
 The password is hashed before it is saved.
 
-### 4. Create multiple users — insertMany
+### 4. Create multiple users – insertMany
 
 **POST `/api/users/bulk`**
 
@@ -129,17 +197,7 @@ Example request:
 }
 ```
 
-Expected response:
-
-```json
-{
-  "message": "Users created",
-  "insertedCount": 2,
-  "insertedIds": ["ID_1", "ID_2"]
-}
-```
-
-### 5. Update one user — updateOne
+### 5. Update one user – updateOne
 
 **PATCH `/api/users/:id`**
 
@@ -153,17 +211,7 @@ Example request:
 
 Replace `:id` with an existing user ID.
 
-Expected response:
-
-```json
-{
-  "message": "Update completed",
-  "matchedCount": 1,
-  "modifiedCount": 1
-}
-```
-
-### 6. Update multiple users — updateMany
+### 6. Update multiple users – updateMany
 
 **PATCH `/api/users/bulk/update`**
 
@@ -178,17 +226,7 @@ Example request:
 }
 ```
 
-Expected response:
-
-```json
-{
-  "message": "Bulk update completed",
-  "matchedCount": 1,
-  "modifiedCount": 1
-}
-```
-
-### 7. Replace one user — replaceOne
+### 7. Replace one user – replaceOne
 
 **PUT `/api/users/:id/replace`**
 
@@ -201,34 +239,13 @@ Example request:
 }
 ```
 
-Expected response:
-
-```json
-{
-  "message": "Replacement completed",
-  "matchedCount": 1,
-  "modifiedCount": 1
-}
-```
-
-The document is replaced with the new email and hashed password.
-
-### 8. Delete one user — deleteOne
+### 8. Delete one user – deleteOne
 
 **DELETE `/api/users/:id`**
 
 Replace `:id` with an existing user ID.
 
-Expected response:
-
-```json
-{
-  "message": "User deleted",
-  "deletedCount": 1
-}
-```
-
-### 9. Delete multiple users — deleteMany
+### 9. Delete multiple users – deleteMany
 
 **DELETE `/api/users/bulk`**
 
@@ -242,155 +259,69 @@ Example request:
 }
 ```
 
-Expected response:
+## MongoDB Cursor
 
-```json
-{
-  "message": "Bulk delete completed",
-  "deletedCount": 1
-}
-```
-
-## New Features
-
-### 10. MongoDB Cursor
+### 10. Read users using a cursor
 
 **GET `/api/users/cursor`**
 
-This route reads users using a MongoDB cursor.
+This route reads users using a MongoDB cursor instead of loading the complete collection into an array.
 
-The cursor processes documents one by one with `for await...of` instead of loading the complete collection into an array with `toArray()`.
+It uses:
 
-The cursor uses:
-
-- `find()` to select documents;
-- `projection` to exclude passwords;
-- `sort()` to sort users;
-- `batchSize(100)` to control the number of documents fetched in each batch;
-- asynchronous iteration to process documents;
+- `find()` to select documents.
+- `projection` to exclude passwords.
+- `sort()` to sort users.
+- `batchSize(100)` to control document batches.
+- `for await...of` to process documents asynchronously.
 - `res.write()` to send the response gradually.
 
-Example request:
+This approach is useful when working with large collections.
 
-```http
-GET /api/users/cursor
-```
+## Aggregation
 
-Expected response:
-
-```json
-[
-  {
-    "_id": "USER_ID",
-    "email": "user@example.com",
-    "createdAt": "2026-01-01T10:00:00.000Z"
-  }
-]
-```
-
-The response is sent as a JSON array, but the server does not first store all documents in a JavaScript array.
-
-This approach is useful when a collection contains many documents.
-
-### 11. Aggregation statistics
+### 11. User statistics
 
 **GET `/api/users/stats`**
 
-This route uses MongoDB's aggregation pipeline to calculate user statistics.
+This route uses MongoDB aggregation to calculate statistics.
 
-The pipeline performs these operations:
+The pipeline uses:
 
-1. `$match` selects documents with an email string.
-2. `$project` extracts the email domain.
-3. `$group` counts users for each domain.
-4. `$sort` sorts domains by user count.
-5. `$group` calculates the total number of users and unique domains.
-6. `$project` formats the final result.
-
-Example request:
-
-```http
-GET /api/users/stats
-```
+1. `$match` – selects documents with an email string.
+2. `$project` – extracts the email domain.
+3. `$group` – counts users for each domain.
+4. `$sort` – sorts domains by user count.
+5. `$group` – calculates total users and unique domains.
+6. `$project` – formats the result.
 
 Example response:
 
 ```json
 {
-  "totalUsers": 4,
+  "totalUsers": 2,
   "uniqueDomains": 2,
   "domains": [
     {
-      "domain": "gmail.com",
-      "userCount": 3
+      "domain": "example.com",
+      "userCount": 1
     },
     {
-      "domain": "example.com",
+      "domain": "gmail.com",
       "userCount": 1
     }
   ]
 }
 ```
 
-The numbers depend on the actual data in MongoDB Atlas.
-
-If the collection is empty, the route returns:
-
-```json
-{
-  "totalUsers": 0,
-  "uniqueDomains": 0,
-  "domains": []
-}
-```
+The numbers depend on the actual database contents.
 
 ## Testing
 
-The routes can be tested with Thunder Client or another API client.
+The application can be tested with Thunder Client or another API client.
 
-1. Start the server with `npm start`.
-2. Log in to the application.
-3. Keep the session cookie in Thunder Client.
-4. Send requests to the routes listed above.
-5. Check the HTTP status and JSON response.
+For Docker testing:
 
-For the cursor route, check that users are returned without passwords.
-
-For the aggregation route, compare the total user count and domain counts with the data stored in MongoDB Atlas.
-
-## Security
-
-- Passwords are hashed with bcryptjs.
-- Password fields are excluded from read responses.
-- API routes require authentication.
-- Email addresses are validated before creating or updating users.
-- The `.env` file must not be uploaded to GitHub.
-
-## Project Structure
-
-```text
-src/
-  config/
-    database.js
-    passport.js
-  controllers/
-    authController.js
-    userApiController.js
-  middlewares/
-    authMiddleware.js
-  models/
-    User.js
-  routes/
-    authRoutes.js
-    userApiRoutes.js
-  server.js
-
-views/
-  auth/
-  styles.css
-
-.env
-.gitignore
-package.json
-README.md
-```
+1. Start Docker Desktop.
+2. Run `docker compose up --build`.
+3. Open
