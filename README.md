@@ -1,258 +1,225 @@
-# HW65 — Passport Authentication and MongoDB CRUD API
+# MongoDB CRUD and Data Processing
 
-## Description
+This project is a simple Express.js application connected to MongoDB Atlas.
 
-Express application with Passport Local authentication, MongoDB Atlas storage, and a protected JSON API implementing MongoDB `find`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `replaceOne`, `deleteOne`, and `deleteMany`.
-
-Passwords are hashed with `bcryptjs`. Password hashes are never included in API responses. All `/api/users` endpoints require an authenticated session.
+It includes user authentication, CRUD operations, MongoDB cursors and an aggregation query.
 
 ## Technologies
 
-- Node.js and Express
-- MongoDB Atlas and Mongoose
-- Passport Local Strategy and `express-session`
-- `bcryptjs`, `dotenv`, and Pug
+- Node.js
+- Express.js
+- MongoDB Atlas
+- Mongoose
+- Passport.js
+- bcryptjs
 
-## Setup
+## Installation
 
-1. Install Node.js.
-2. Clone this repository and enter the project folder:
-   ```bash
-   git clone YOUR_REPOSITORY_URL
-   cd hw65
-   ```
-3. Install dependencies:
-   ```bash
-   npm install
-   ```
-4. Create a `.env` file in the project root (do not commit it):
-   ```env
-   MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-url>/<database-name>?retryWrites=true&w=majority
-   SESSION_SECRET=replace_with_a_long_random_secret
-   PORT=3000
-   ```
-5. In MongoDB Atlas, configure a database user and Network Access so your computer can connect.
-6. Start the server:
-   ```bash
-   npm run dev
-   ```
-7. Open `http://localhost:3000`, register an account, and log in.
+Install dependencies:
+
+```bash
+npm install
+```
+
+Create a `.env` file in the project root:
+
+```env
+MONGODB_URI=your_mongodb_connection_string
+SESSION_SECRET=your_session_secret
+PORT=3000
+```
+
+Start the server:
+
+```bash
+npm start
+```
+
+The server runs at:
+
+```text
+http://localhost:3000
+```
 
 ## Authentication
 
-- `GET /register` — registration page.
-- `POST /register` — creates a login account (password is hashed).
-- `GET /login` — login page.
-- `POST /login` — authenticates with Passport Local.
-- `POST /logout` — ends the session.
-- `GET /protected` — protected profile page.
-- `GET /users` — protected HTML page listing users without password hashes.
+All `/api/users` routes require an authenticated user.
 
-The JSON endpoints below use the same session authentication. First log in through the browser. For API clients, keep the session cookie returned by the login flow and send it with each request. Unauthenticated requests are redirected to `/login`.
+First, log in through the application:
 
-## CRUD API
-
-Base path: `/api/users`
-
-The API uses the existing `users` collection. The `email` field is unique. Passwords must contain at least six characters and are hashed before storage. API responses never return `password`.
-
-### 1. Read documents — `find()` and projection
-
-**Request**
-
-```http
-GET /api/users?fields=_id,email,createdAt
+```text
+POST /login
 ```
 
-Optional query parameters:
-- `fields` — comma-separated list of allowed fields: `_id`, `email`, `createdAt`, `updatedAt`. If omitted, all public fields are returned (the password is always excluded).
-- `email` — filter by one exact email address.
+When using Thunder Client, keep the session cookie from the login request. The cookie is needed for the API requests.
 
-**Example response — `200 OK`**
+## API Routes
+
+The API base URL is:
+
+```text
+http://localhost:3000/api/users
+```
+
+### 1. Read users
+
+**GET `/api/users`**
+
+Returns users without their passwords.
+
+Example:
+
+```http
+GET /api/users
+```
+
+### 2. Read users with projection
+
+**GET `/api/users?fields=email`**
+
+Returns only the user ID, email and creation date.
+
+Example response:
+
+```json
+[
+  {
+    "_id": "USER_ID",
+    "email": "user@example.com",
+    "createdAt": "2026-01-01T10:00:00.000Z"
+  }
+]
+```
+
+### 3. Create one user — insertOne
+
+**POST `/api/users`**
+
+Example request:
 
 ```json
 {
-  "count": 1,
+  "email": "newuser@example.com",
+  "password": "secret123"
+}
+```
+
+Expected status: `201 Created`.
+
+The password is hashed before it is saved.
+
+### 4. Create multiple users — insertMany
+
+**POST `/api/users/bulk`**
+
+Example request:
+
+```json
+{
   "users": [
     {
-      "_id": "665f1a2b3c4d5e6f78901234",
-      "email": "alex@example.com",
-      "createdAt": "2026-01-15T10:00:00.000Z"
+      "email": "first@example.com",
+      "password": "secret123"
+    },
+    {
+      "email": "second@example.com",
+      "password": "secret456"
     }
   ]
 }
 ```
 
-Implemented in `src/controllers/userApiController.js` (`findUsers`) with `User.find(filter, projection)`.
-
-### 2. Insert one document — `insertOne`
-
-**Request**
-
-```http
-POST /api/users
-Content-Type: application/json
-
-{
-  "email": "new.user@example.com",
-  "password": "strongpass123"
-}
-```
-
-**Example response — `201 Created`**
-
-```json
-{
-  "message": "User created",
-  "user": {
-    "_id": "665f1a2b3c4d5e6f78901234",
-    "email": "new.user@example.com",
-    "createdAt": "2026-01-15T10:00:00.000Z",
-    "updatedAt": "2026-01-15T10:00:00.000Z"
-  }
-}
-```
-
-Implemented by `User.collection.insertOne()` in `insertOne`. Duplicate email returns `409 Conflict`; invalid input returns `400 Bad Request`.
-
-### 3. Insert multiple documents — `insertMany`
-
-**Request**
-
-```http
-POST /api/users/bulk
-Content-Type: application/json
-
-{
-  "users": [
-    { "email": "anna@example.com", "password": "strongpass123" },
-    { "email": "max@example.com", "password": "anotherpass123" }
-  ]
-}
-```
-
-**Example response — `201 Created`**
+Expected response:
 
 ```json
 {
   "message": "Users created",
   "insertedCount": 2,
-  "users": [
-    { "_id": "665f1a2b3c4d5e6f78901235", "email": "anna@example.com" },
-    { "_id": "665f1a2b3c4d5e6f78901236", "email": "max@example.com" }
-  ]
+  "insertedIds": ["ID_1", "ID_2"]
 }
 ```
 
-IDs and dates in examples are illustrative. Implemented with `User.collection.insertMany()`. The request must contain 1–100 users.
+### 5. Update one user — updateOne
 
-### 4. Update one document — `updateOne`
+**PATCH `/api/users/:id`**
 
-Replace `:id` with the user's MongoDB `_id`.
+Example request:
 
-**Request**
-
-```http
-PATCH /api/users/665f1a2b3c4d5e6f78901234
-Content-Type: application/json
-
+```json
 {
   "email": "updated@example.com"
 }
 ```
 
-**Example response — `200 OK`**
+Replace `:id` with an existing user ID.
+
+Expected response:
 
 ```json
 {
-  "message": "User updated",
+  "message": "Update completed",
   "matchedCount": 1,
-  "modifiedCount": 1,
-  "user": {
-    "_id": "665f1a2b3c4d5e6f78901234",
-    "email": "updated@example.com"
-  }
+  "modifiedCount": 1
 }
 ```
 
-The body can contain `email`, `password`, or both. A supplied password is hashed. Implemented with `User.collection.updateOne()`.
+### 6. Update multiple users — updateMany
 
-### 5. Update multiple documents — `updateMany`
+**PATCH `/api/users/bulk/update`**
 
-**Request**
-
-```http
-PATCH /api/users/bulk/update
-Content-Type: application/json
-
-{
-  "filter": { "emailDomain": "example.com" },
-  "update": { "email": "shared@example.com" }
-}
-```
-
-This illustrative update may fail with `409 Conflict` if it causes duplicate email addresses. For a successful practical test, use a non-conflicting update, for example update a shared password for matching test users:
+Example request:
 
 ```json
 {
-  "filter": { "emailDomain": "example.com" },
-  "update": { "password": "newpassword123" }
+  "filter": {
+    "email": "first@example.com"
+  },
+  "email": "updated@example.com"
 }
 ```
 
-**Example response — `200 OK`**
+Expected response:
 
 ```json
 {
-  "message": "Users updated",
-  "matchedCount": 2,
-  "modifiedCount": 2
+  "message": "Bulk update completed",
+  "matchedCount": 1,
+  "modifiedCount": 1
 }
 ```
 
-Supported filters: `{ "email": "person@example.com" }`, `{ "emailDomain": "example.com" }`, or `{ "_id": "validMongoObjectId" }`. A non-empty filter is mandatory. Implemented with `User.collection.updateMany()`.
+### 7. Replace one user — replaceOne
 
-### 6. Replace one document — `replaceOne`
+**PUT `/api/users/:id/replace`**
 
-`replaceOne` replaces the document's fields, rather than patching only selected fields. The `_id` stays the same. The replacement must include both `email` and `password`.
+Example request:
 
-**Request**
-
-```http
-PUT /api/users/665f1a2b3c4d5e6f78901234/replace
-Content-Type: application/json
-
+```json
 {
   "email": "replacement@example.com",
-  "password": "replacementpass123"
+  "password": "secret789"
 }
 ```
 
-**Example response — `200 OK`**
+Expected response:
 
 ```json
 {
-  "message": "User replaced",
+  "message": "Replacement completed",
   "matchedCount": 1,
-  "modifiedCount": 1,
-  "user": {
-    "_id": "665f1a2b3c4d5e6f78901234",
-    "email": "replacement@example.com"
-  }
+  "modifiedCount": 1
 }
 ```
 
-Implemented with `User.collection.replaceOne()`. The password is hashed before storage.
+The document is replaced with the new email and hashed password.
 
-### 7. Delete one document — `deleteOne`
+### 8. Delete one user — deleteOne
 
-**Request**
+**DELETE `/api/users/:id`**
 
-```http
-DELETE /api/users/665f1a2b3c4d5e6f78901234
-```
+Replace `:id` with an existing user ID.
 
-**Example response — `200 OK`**
+Expected response:
 
 ```json
 {
@@ -261,51 +228,169 @@ DELETE /api/users/665f1a2b3c4d5e6f78901234
 }
 ```
 
-Implemented with `User.collection.deleteOne()`. Returns `404 Not Found` if no user has that ID.
+### 9. Delete multiple users — deleteMany
 
-### 8. Delete multiple documents — `deleteMany`
+**DELETE `/api/users/bulk`**
 
-**Request**
-
-```http
-DELETE /api/users/bulk
-Content-Type: application/json
-
-{
-  "filter": { "emailDomain": "example.com" }
-}
-```
-
-**Example response — `200 OK`**
+Example request:
 
 ```json
 {
-  "message": "Users deleted",
-  "deletedCount": 2
+  "filter": {
+    "email": "first@example.com"
+  }
 }
 ```
 
-Supported filters are exact `email`, `emailDomain`, or `_id`. An empty filter is rejected to prevent accidentally deleting every user. Implemented with `User.collection.deleteMany()`.
+Expected response:
 
-## Common status codes
+```json
+{
+  "message": "Bulk delete completed",
+  "deletedCount": 1
+}
+```
 
-- `200 OK` — read, update, replace, or delete completed.
-- `201 Created` — document(s) created.
-- `400 Bad Request` — invalid input, ID, projection, or missing bulk filter.
-- `401`/redirect to login — no authenticated session.
-- `404 Not Found` — requested user ID does not exist.
-- `409 Conflict` — email already exists or violates the unique index.
-- `500 Internal Server Error` — unexpected server/database error.
+## New Features
 
-## Files added or updated
+### 10. MongoDB Cursor
 
-- `src/controllers/userApiController.js` — CRUD operations and input validation.
-- `src/routes/authRoutes.js` — protected API routes.
-- `README.md` — setup steps, route descriptions, examples, and response samples.
+**GET `/api/users/cursor`**
 
-## Security notes
+This route reads users using a MongoDB cursor.
 
-- Never commit `.env`; keep `MONGODB_URI` and `SESSION_SECRET` in local environment variables or your deployment provider's environment-variable settings.
-- Do not use real customer data for demonstrations.
-- Bulk update and delete operations require a non-empty supported filter.
-- Passwords are hashed with bcrypt before insertion or update and are omitted from query results.
+The cursor processes documents one by one with `for await...of` instead of loading the complete collection into an array with `toArray()`.
+
+The cursor uses:
+
+- `find()` to select documents;
+- `projection` to exclude passwords;
+- `sort()` to sort users;
+- `batchSize(100)` to control the number of documents fetched in each batch;
+- asynchronous iteration to process documents;
+- `res.write()` to send the response gradually.
+
+Example request:
+
+```http
+GET /api/users/cursor
+```
+
+Expected response:
+
+```json
+[
+  {
+    "_id": "USER_ID",
+    "email": "user@example.com",
+    "createdAt": "2026-01-01T10:00:00.000Z"
+  }
+]
+```
+
+The response is sent as a JSON array, but the server does not first store all documents in a JavaScript array.
+
+This approach is useful when a collection contains many documents.
+
+### 11. Aggregation statistics
+
+**GET `/api/users/stats`**
+
+This route uses MongoDB's aggregation pipeline to calculate user statistics.
+
+The pipeline performs these operations:
+
+1. `$match` selects documents with an email string.
+2. `$project` extracts the email domain.
+3. `$group` counts users for each domain.
+4. `$sort` sorts domains by user count.
+5. `$group` calculates the total number of users and unique domains.
+6. `$project` formats the final result.
+
+Example request:
+
+```http
+GET /api/users/stats
+```
+
+Example response:
+
+```json
+{
+  "totalUsers": 4,
+  "uniqueDomains": 2,
+  "domains": [
+    {
+      "domain": "gmail.com",
+      "userCount": 3
+    },
+    {
+      "domain": "example.com",
+      "userCount": 1
+    }
+  ]
+}
+```
+
+The numbers depend on the actual data in MongoDB Atlas.
+
+If the collection is empty, the route returns:
+
+```json
+{
+  "totalUsers": 0,
+  "uniqueDomains": 0,
+  "domains": []
+}
+```
+
+## Testing
+
+The routes can be tested with Thunder Client or another API client.
+
+1. Start the server with `npm start`.
+2. Log in to the application.
+3. Keep the session cookie in Thunder Client.
+4. Send requests to the routes listed above.
+5. Check the HTTP status and JSON response.
+
+For the cursor route, check that users are returned without passwords.
+
+For the aggregation route, compare the total user count and domain counts with the data stored in MongoDB Atlas.
+
+## Security
+
+- Passwords are hashed with bcryptjs.
+- Password fields are excluded from read responses.
+- API routes require authentication.
+- Email addresses are validated before creating or updating users.
+- The `.env` file must not be uploaded to GitHub.
+
+## Project Structure
+
+```text
+src/
+  config/
+    database.js
+    passport.js
+  controllers/
+    authController.js
+    userApiController.js
+  middlewares/
+    authMiddleware.js
+  models/
+    User.js
+  routes/
+    authRoutes.js
+    userApiRoutes.js
+  server.js
+
+views/
+  auth/
+  styles.css
+
+.env
+.gitignore
+package.json
+README.md
+```

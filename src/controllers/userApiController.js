@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const { once } = require("events");
 const User = require("../models/User");
 
 const users = User.collection;
@@ -21,19 +22,10 @@ function publicUser(user) {
 // GET /api/users — find() and projection
 async function findUsers(req, res, next) {
   try {
-    let projection;
-
-    if (req.query.fields === "email") {
-      projection = {
-        _id: 1,
-        email: 1,
-        createdAt: 1,
-      };
-    } else {
-      projection = {
-        password: 0,
-      };
-    }
+    const projection =
+      req.query.fields === "email"
+        ? { _id: 1, email: 1, createdAt: 1 }
+        : { password: 0 };
 
     const result = await users
       .find({}, { projection })
@@ -41,6 +33,121 @@ async function findUsers(req, res, next) {
       .toArray();
 
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+// GET /api/users/cursor — read documents using a MongoDB cursor
+async function streamUsers(req, res, next) {
+  const cursor = users
+    .find(
+      {},
+      {
+        projection: {
+          password: 0,
+        },
+      },
+    )
+    .sort({ createdAt: -1 })
+    .batchSize(100);
+
+  try {
+    res.status(200);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+
+    res.write("[");
+
+    let first = true;
+
+    for await (const user of cursor) {
+      if (!first) {
+        res.write(",");
+      }
+
+      first = false;
+
+      const canContinue = res.write(JSON.stringify(publicUser(user)));
+
+      if (!canContinue) {
+        await once(res, "drain");
+      }
+    }
+
+    res.end("]");
+  } catch (error) {
+    if (res.headersSent) {
+      res.destroy(error);
+    } else {
+      next(error);
+    }
+  } finally {
+    await cursor.close().catch(() => {});
+  }
+}
+
+// GET /api/users/stats — aggregation statistics
+async function getUserStats(req, res, next) {
+  try {
+    const pipeline = [
+      {
+        $match: {
+          email: { $type: "string" },
+        },
+      },
+      {
+        $project: {
+          domain: {
+            $toLower: {
+              $arrayElemAt: [{ $split: ["$email", "@"] }, 1],
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$domain",
+          userCount: { $sum: 1 },
+        },
+      },
+      {
+        $sort: {
+          userCount: -1,
+          _id: 1,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalUsers: { $sum: "$userCount" },
+          uniqueDomains: { $sum: 1 },
+          domains: {
+            $push: {
+              domain: "$_id",
+              userCount: "$userCount",
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          totalUsers: 1,
+          uniqueDomains: 1,
+          domains: 1,
+        },
+      },
+    ];
+
+    const result = await users.aggregate(pipeline).toArray();
+
+    res.json(
+      result[0] || {
+        totalUsers: 0,
+        uniqueDomains: 0,
+        domains: [],
+      },
+    );
   } catch (error) {
     next(error);
   }
@@ -61,11 +168,13 @@ async function insertOne(req, res, next) {
       });
     }
 
+    const now = new Date();
+
     const document = {
       email: email.trim().toLowerCase(),
       password: await bcrypt.hash(password, 10),
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     const result = await users.insertOne(document);
@@ -298,6 +407,8 @@ async function deleteMany(req, res, next) {
 
 module.exports = {
   findUsers,
+  streamUsers,
+  getUserStats,
   insertOne,
   insertMany,
   updateOne,
